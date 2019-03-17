@@ -1,14 +1,14 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2018 - 2019
+*  (C) COPYRIGHT AUTHORS, 2019
 *
-*  TITLE:       WINE.H
+*  TITLE:       PROPTOKEN.H
 *
 *  VERSION:     1.73
 *
 *  DATE:        09 Mar 2019
 *
-*  Agent Donald code.
+*  Common header file for Token property sheet.
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -16,13 +16,10 @@
 * PARTICULAR PURPOSE.
 *
 *******************************************************************************/
-
 #pragma once
 
-#define OBJECT_TYPES_FIRST_ENTRY_WINE(ObjectTypes) (POBJECT_TYPE_INFORMATION) \
-    RtlOffsetToPointer(ObjectTypes, ALIGN_UP(sizeof(OBJECT_TYPES_INFORMATION), ULONG))
-
-typedef char* (__cdecl *pwine_get_version)(void);
-
-const char *wine_get_version(void);
-int is_wine(void);
+INT_PTR CALLBACK TokenPageDialogProc(
+    _In_  HWND hwndDlg,
+    _In_  UINT uMsg,
+    _In_  WPARAM wParam,
+    _In_  LPARAM lParam);

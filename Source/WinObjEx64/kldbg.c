@@ -4,9 +4,9 @@
 *
 *  TITLE:       KLDBG.C, based on KDSubmarine by Evilcry
 *
-*  VERSION:     1.72
+*  VERSION:     1.73
 *
-*  DATE:        22 Feb 2019
+*  DATE:        12 Mar 2019
 *
 *  MINIMUM SUPPORTED OS WINDOWS 7
 *
@@ -1684,6 +1684,12 @@ POBJINFO ObQueryObjectByAddress(
     ULONG_PTR ObjectHeaderAddress;
     OBJECT_HEADER ObjectHeader;
 
+    if (g_kdctx.hDevice == NULL)
+        return NULL;
+
+    if (ObjectAddress < g_kdctx.SystemRangeStart)
+        return NULL;
+
     //
     // Read object header, fail is critical.
     //
@@ -1698,7 +1704,7 @@ POBJINFO ObQueryObjectByAddress(
     {
 #ifdef _DEBUG
         OutputDebugStringA(__FUNCTION__);
-        OutputDebugStringA("kdReadSystemMemoryEx(ObjectHeaderAddress(ObjectAddress)) failed");
+        OutputDebugStringA("\r\nkdReadSystemMemoryEx(ObjectHeaderAddress(ObjectAddress)) failed");
 #endif
         return NULL;
     }
@@ -2740,7 +2746,7 @@ DWORD WINAPI kdQuerySystemInformation(
 
     do {
 
-        miSpace = (PRTL_PROCESS_MODULES)supGetSystemInfo(SystemModuleInformation);
+        miSpace = (PRTL_PROCESS_MODULES)supGetSystemInfo(SystemModuleInformation, NULL);
         if (miSpace == NULL)
             break;
 

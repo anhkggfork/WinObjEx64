@@ -4,9 +4,9 @@
 *
 *  TITLE:       EXTRASCALLBACKS.C
 *
-*  VERSION:     1.72
+*  VERSION:     1.73
 *
-*  DATE:        28 Feb 2019
+*  DATE:        12 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -20,7 +20,7 @@
 #include "treelist\treelist.h"
 #include "hde/hde64.h"
 
-ATOM g_CbTreeListAtom;
+ULONG g_CallbacksCount;
 
 //
 // All available names for CiCallbacks. Unknown is expected to be XBOX callback.
@@ -1498,6 +1498,8 @@ VOID AddEntryToList(
         (UINT)0,
         szAddress,
         &TreeListSubItems);
+
+    g_CallbacksCount += 1;
 }
 
 /*
@@ -2803,6 +2805,8 @@ VOID CallbacksList(
 {
     PRTL_PROCESS_MODULES Modules = NULL;
 
+    WCHAR szText[100];
+
     __try {
         //
         // Query all addresses.
@@ -2884,7 +2888,7 @@ VOID CallbacksList(
 
     __try {
 
-        Modules = (PRTL_PROCESS_MODULES)supGetSystemInfo(SystemModuleInformation);
+        Modules = (PRTL_PROCESS_MODULES)supGetSystemInfo(SystemModuleInformation, NULL);
         if (Modules == NULL) {
             MessageBox(hwndDlg, TEXT("Could not allocate memory for modules list."), NULL, MB_ICONERROR);
             __leave;
@@ -3119,6 +3123,13 @@ VOID CallbacksList(
                 Modules);
         }
 
+        //
+        // Show total number of callbacks.
+        //
+        _strcpy(szText, TEXT("Total listed callbacks: "));
+        ultostr(g_CallbacksCount, _strend(szText));
+        SetWindowText(GetDlgItem(hwndDlg, ID_EXTRASLIST_STATUSBAR), szText);
+
     }
     __finally {
         if (Modules) supHeapFree(Modules);
@@ -3166,28 +3177,24 @@ VOID CallbacksDialogHandlePopupMenu(
 */
 INT_PTR CallbacksDialogResize(
     _In_ HWND hwndDlg,
-    _In_ HWND hwndSizeGrip,
+    _In_ HWND hwndStatusBar,
     _In_ HWND hwndTreeList
 )
 {
-    RECT r1;
-    INT  cy;
+    RECT r, szr;
 
-    RtlSecureZeroMemory(&r1, sizeof(r1));
+    RtlSecureZeroMemory(&r, sizeof(RECT));
+    RtlSecureZeroMemory(&szr, sizeof(RECT));
 
-    GetClientRect(hwndDlg, &r1);
+    GetClientRect(hwndDlg, &r);
+    GetClientRect(hwndStatusBar, &szr);
 
-    cy = r1.bottom - 24;
-    if (hwndSizeGrip)
-        cy -= GRIPPER_SIZE;
+    SendMessage(hwndStatusBar, WM_SIZE, 0, 0);
 
     SetWindowPos(hwndTreeList, 0, 0, 0,
-        r1.right - 24,
-        cy,
-        SWP_NOMOVE | SWP_NOZORDER);
-
-    if (hwndSizeGrip)
-        supSzGripWindowOnResize(hwndDlg, hwndSizeGrip);
+        r.right,
+        r.bottom - szr.bottom,
+        SWP_NOZORDER);
 
     return 1;
 }
@@ -3244,6 +3251,8 @@ VOID CallbackDialogContentRefresh(
 
         if (fResetContent) TreeList_ClearTree(pDlgContext->TreeList);
 
+        g_CallbacksCount = 0;
+
         CallbacksList(hwndDlg, pDlgContext->TreeList);
 
     }
@@ -3289,17 +3298,14 @@ INT_PTR CALLBACK CallbacksDialogProc(
     case WM_SIZE:
         pDlgContext = (EXTRASCONTEXT*)GetProp(hwndDlg, T_DLGCONTEXT);
         if (pDlgContext) {
-            CallbacksDialogResize(hwndDlg, pDlgContext->SizeGrip, pDlgContext->TreeList);
+            CallbacksDialogResize(hwndDlg, pDlgContext->StatusBar, pDlgContext->TreeList);
         }
         break;
 
     case WM_CLOSE:
         pDlgContext = (EXTRASCONTEXT*)GetProp(hwndDlg, T_DLGCONTEXT);
         if (pDlgContext) {
-            if (pDlgContext->SizeGrip) DestroyWindow(pDlgContext->SizeGrip);
-
             g_WinObj.AuxDialogs[wobjCallbacksDlgId] = NULL;
-
             supHeapFree(pDlgContext);
         }
         return DestroyWindow(hwndDlg);
@@ -3375,7 +3381,7 @@ VOID extrasCreateCallbacksDialog(
 
     hwndDlg = CreateDialogParam(
         g_WinObj.hInstance,
-        MAKEINTRESOURCE(IDD_DIALOG_TREELIST_PLACEHOLDER),
+        MAKEINTRESOURCE(IDD_DIALOG_CALLBACKS),
         hwndParent,
         &CallbacksDialogProc,
         (LPARAM)pDlgContext);
@@ -3386,14 +3392,13 @@ VOID extrasCreateCallbacksDialog(
 
     pDlgContext->hwndDlg = hwndDlg;
     g_WinObj.AuxDialogs[wobjCallbacksDlgId] = hwndDlg;
-    pDlgContext->SizeGrip = supCreateSzGripWindow(hwndDlg);
+    pDlgContext->StatusBar = GetDlgItem(hwndDlg, ID_EXTRASLIST_STATUSBAR);
 
     extrasSetDlgIcon(hwndDlg);
     SetWindowText(hwndDlg, TEXT("System Callbacks"));
 
     GetClientRect(hwndParent, &rc);
-    g_CbTreeListAtom = InitializeTreeListControl();
-    pDlgContext->TreeList = CreateWindowEx(WS_EX_CLIENTEDGE, WC_TREELIST, NULL,
+    pDlgContext->TreeList = CreateWindowEx(/*WS_EX_CLIENTEDGE*/WS_EX_STATICEDGE, WC_TREELIST, NULL,
         WS_VISIBLE | WS_CHILD | WS_TABSTOP | TLSTYLE_COLAUTOEXPAND, 12, 14,
         rc.right - 24, rc.bottom - 24, hwndDlg, NULL, NULL, NULL);
 

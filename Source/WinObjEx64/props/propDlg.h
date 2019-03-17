@@ -1,12 +1,12 @@
 /*******************************************************************************
 *
-*  (C) COPYRIGHT AUTHORS, 2015 - 2018
+*  (C) COPYRIGHT AUTHORS, 2015 - 2019
 *
 *  TITLE:       PROPDLG.H
 *
-*  VERSION:     1.60
+*  VERSION:     1.73
 *
-*  DATE:        25 Oct 2018
+*  DATE:        06 Mar 2019
 *
 *  Common header file for properties dialog.
 *
@@ -22,6 +22,7 @@
 // Externs for global properties variables.
 //
 extern HWND g_PropWindow;
+extern HWND g_PsPropWindow;
 extern HWND g_SubPropWindow;
 extern HWND g_NamespacePropWindow;
 
@@ -43,7 +44,8 @@ VOID propCreateDialog(
     _In_ LPWSTR lpObjectName,
     _In_ LPCWSTR lpObjectType,
     _In_opt_ LPWSTR lpDescription,
-    _In_opt_ PROP_NAMESPACE_INFO *NamespaceObject);
+    _In_opt_ PROP_NAMESPACE_INFO *NamespaceObject,
+    _In_opt_ PROP_UNNAMED_OBJECT_INFO *UnnamedObject);
 
 PPROP_OBJECT_INFO propContextCreate(
     _In_opt_ LPWSTR lpObjectName,

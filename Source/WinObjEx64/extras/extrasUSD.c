@@ -4,9 +4,9 @@
 *
 *  TITLE:       EXTRASUSD.C
 *
-*  VERSION:     1.72
+*  VERSION:     1.73
 *
-*  DATE:        04 Feb 2019
+*  DATE:        07 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -22,7 +22,6 @@
 EXTRASCONTEXT DlgContext;
 
 HWND UsdTreeList = NULL;
-ATOM UsdTreeListAtom = 0;
 
 /*
 * UsdDumpSharedRegion
@@ -54,7 +53,7 @@ VOID UsdDumpSharedRegion(
         if (IsBadReadPtr(pUserSharedData, sizeof(KUSER_SHARED_DATA)))
             break;
 
-        if (!supInitTreeListForDump(hwndParent, &UsdTreeListAtom, &UsdTreeList)) {
+        if (!supInitTreeListForDump(hwndParent, &UsdTreeList)) {
             break;
         }
 
@@ -324,9 +323,9 @@ VOID UsdDumpSharedRegion(
             //
 
             RtlSecureZeroMemory(&subitems, sizeof(subitems));
-            RtlSecureZeroMemory(&szValue, sizeof(szValue));
+            RtlSecureZeroMemory(szValue, sizeof(szValue));
 
-            wsprintf(szValue, L"0x%02x", pUserSharedData->MitigationPolicies);
+            rtl_swprintf_s(szValue, MAX_PATH, TEXT("0x%02X"), pUserSharedData->MitigationPolicies);
 
             subitems.Text[0] = szValue;
             subitems.Count = 1;
@@ -454,8 +453,6 @@ INT_PTR CALLBACK UsdDialogProc(
 
     case WM_CLOSE:
         DestroyWindow(UsdTreeList);
-        UnregisterClass(MAKEINTATOM(UsdTreeListAtom), g_WinObj.hInstance);
-
         DestroyWindow(hwndDlg);
         g_WinObj.AuxDialogs[wobjUSDDlgId] = NULL;
         return TRUE;
