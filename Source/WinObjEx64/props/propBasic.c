@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        16 Mar 2019
+*  DATE:        17 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -187,11 +187,11 @@ VOID propSetProcessMitigationsInfo(
     {
         if (Policies.SystemCallDisablePolicy.Flags) {
             if (Policies.SystemCallDisablePolicy.DisallowWin32kSystemCalls) {
-                _strcpy(szBuffer, TEXT("Disallow Win32k system calls"));
+                _strcpy(szBuffer, TEXT("SystemCallDisable -> Disallow Win32k calls"));
                 SendMessage(hwndCB, CB_ADDSTRING, (WPARAM)0, (LPARAM)&szBuffer);
             }
             if (Policies.SystemCallDisablePolicy.AuditDisallowWin32kSystemCalls) {
-                _strcpy(szBuffer, TEXT("Audit disallow Win32k system calls"));
+                _strcpy(szBuffer, TEXT("SystemCallDisable -> Audit disallow Win32k calls"));
                 SendMessage(hwndCB, CB_ADDSTRING, (WPARAM)0, (LPARAM)&szBuffer);
             }
         }
@@ -278,11 +278,11 @@ VOID propSetProcessMitigationsInfo(
     {
         if (Policies.FontDisablePolicy.Flags) {
             if (Policies.FontDisablePolicy.DisableNonSystemFonts) {
-                _strcpy(szBuffer, TEXT("Disable non system fonts"));
+                _strcpy(szBuffer, TEXT("Fonts -> Disable non system fonts"));
                 SendMessage(hwndCB, CB_ADDSTRING, (WPARAM)0, (LPARAM)&szBuffer);
             }
             if (Policies.FontDisablePolicy.AuditNonSystemFontLoading) {
-                _strcpy(szBuffer, TEXT("Audit non system font loading"));
+                _strcpy(szBuffer, TEXT("Fonts -> Audit non system font loading"));
                 SendMessage(hwndCB, CB_ADDSTRING, (WPARAM)0, (LPARAM)&szBuffer);
             }
         }
@@ -1544,6 +1544,7 @@ VOID propBasicQueryProcess(
     LPWSTR Name;
     PBYTE Buffer;
     WCHAR szBuffer[100];
+    KERNEL_USER_TIMES KernelUserTimes;
 
     if (Context == NULL) {
         return;
@@ -1576,11 +1577,15 @@ VOID propBasicQueryProcess(
             //
             // Start time.
             //
+            RtlSecureZeroMemory(&KernelUserTimes, sizeof(KERNEL_USER_TIMES));
+            NtQueryInformationProcess(hObject, ProcessTimes, 
+                (PVOID)&KernelUserTimes, sizeof(KERNEL_USER_TIMES), &i);
+
             SetDlgItemText(hwndDlg, IDC_PROCESS_STARTED, T_CannotQuery);
 
             RtlSecureZeroMemory(&szBuffer, sizeof(szBuffer));
             if (supPrintTimeConverted(
-                &Context->UnnamedObjectInfo.Process->CreateTime,
+                &KernelUserTimes.CreateTime,
                 szBuffer,
                 sizeof(szBuffer) / sizeof(szBuffer[0])))
             {
@@ -1843,7 +1848,7 @@ VOID propBasicQueryThread(
         return;
     }
 
-    Thread = Context->UnnamedObjectInfo.Thread;
+    Thread = &Context->UnnamedObjectInfo.ThreadInformation;
 
     //
     // Open Thread object.

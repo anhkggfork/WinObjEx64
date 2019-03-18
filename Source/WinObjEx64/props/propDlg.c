@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        13 Mar 2019
+*  DATE:        17 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -133,10 +133,6 @@ BOOL propOpenCurrentObject(
     // Objects without name must be handled in a special way.
     //
     if (Context->ContextType == propUnnamed) {
-        if (Context->UnnamedObjectInfo.DataPointer == NULL) {
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return bResult;
-        }
 
         InitializeObjectAttributes(&obja, NULL, 0, NULL, NULL);
 
@@ -323,6 +319,9 @@ PPROP_OBJECT_INFO propContextCreate(
             }
             Context->TypeIndex = ObManagerGetIndexByTypeName(lpObjectType);
         }
+        else {
+            Context->TypeIndex = ObjectTypeUnknown;
+        }
 
         //
         // Copy CurrentObjectPath if given, as it can change because dialog is modeless.
@@ -404,14 +403,13 @@ VOID propContextDestroy(
         }
         //free unnamed object info
         if (Context->ContextType == propUnnamed) {
-            if (Context->UnnamedObjectInfo.DataPointer)
-                supHeapFree(Context->UnnamedObjectInfo.DataPointer);
             if (Context->UnnamedObjectInfo.ImageName.Buffer)
                 supHeapFree(Context->UnnamedObjectInfo.ImageName.Buffer);
         }
 
         //free context itself
         supHeapFree(Context);
+
     }
     __except (exceptFilter(GetExceptionCode(), GetExceptionInformation())) {
         return;
@@ -533,17 +531,17 @@ VOID propCopyUnnamedObject(
     //
     DestinationContext->UnnamedObjectInfo.ObjectAddress = SourceObject->ObjectAddress;
 
-    CopySize = SourceObject->DataSize;
-    CopyBuffer = supHeapAlloc(CopySize);
+    RtlCopyMemory(&DestinationContext->UnnamedObjectInfo.ClientId,
+        &SourceObject->ClientId,
+        sizeof(CLIENT_ID));
 
-    if (CopyBuffer) {
-        DestinationContext->UnnamedObjectInfo.DataPointer = CopyBuffer;
-        DestinationContext->UnnamedObjectInfo.DataSize = CopySize;
+    if (DestinationContext->TypeIndex == ObjectTypeThread) {
 
-        RtlCopyMemory(CopyBuffer,
-            SourceObject->DataPointer,
-            SourceObject->DataSize);
+        RtlCopyMemory(&DestinationContext->UnnamedObjectInfo.ThreadInformation,
+            &SourceObject->ThreadInformation,
+            sizeof(SYSTEM_THREAD_INFORMATION));
     }
+
     //
     // Copy image name if present.
     //

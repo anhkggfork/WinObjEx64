@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        16 Mar 2019
+*  DATE:        17 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -58,7 +58,7 @@ BOOL supInitNtdllCRT(
 )
 {
     HMODULE hdll;
-    
+
     if (IsWine) {
         hdll = GetModuleHandle(TEXT("msvcrt.dll"));
         if (hdll == NULL)
@@ -1073,7 +1073,7 @@ UINT supGetObjectNameIndexByTypeIndex(
             pObject = OBJECT_TYPES_NEXT_ENTRY(pObject);
         }
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (exceptFilter(GetExceptionCode(), GetExceptionInformation())) {
         return ObjectTypeUnknown;
     }
     return ObjectTypeUnknown;
@@ -1646,12 +1646,10 @@ BOOL supQueryThreadWin32StartAddress(
     _In_ HANDLE ThreadHandle,
     _Out_ PULONG_PTR Win32StartAddress
 )
-{   
+{
     ULONG ReturnLength;
     NTSTATUS Status;
-
     ULONG_PTR win32StartAddress = 0;
-    OBJECT_ATTRIBUTES Obja = RTL_INIT_OBJECT_ATTRIBUTES((PUNICODE_STRING)NULL, 0);
 
     Status = NtQueryInformationThread(ThreadHandle, ThreadQuerySetWin32StartAddress,
         &win32StartAddress, sizeof(ULONG_PTR), &ReturnLength);
@@ -1734,7 +1732,6 @@ BOOL supQueryProcessNameByEPROCESS(
         PBYTE ListRef;
     } List;
 
-    OBJECT_ATTRIBUTES obja = RTL_INIT_OBJECT_ATTRIBUTES((PUNICODE_STRING)NULL, 0);
 
     List.ListRef = (PBYTE)ProcessList;
 
@@ -1768,11 +1765,9 @@ BOOL supQueryProcessNameByEPROCESS(
 
             if (List.Processes->ThreadCount) {
 
-                if (NT_SUCCESS(NtOpenProcess(
-                    &hProcess,
+                if (NT_SUCCESS(supOpenProcess(List.Processes->UniqueProcessId,
                     PROCESS_QUERY_LIMITED_INFORMATION,
-                    &obja,
-                    &List.Processes->Threads[0].ClientId)))
+                    &hProcess)))
                 {
                     SavedProcessList[ProcessListCount].hProcess = hProcess;
                     SavedProcessList[ProcessListCount].EntryPtr = List.ListRef;
@@ -2413,7 +2408,7 @@ BOOL supQueryTypeInfo(
         }
 
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    __except (exceptFilter(GetExceptionCode(), GetExceptionInformation())) {
         return FALSE;
     }
     return bResult;
@@ -2627,7 +2622,7 @@ BOOL supQueryDriverDescription(
 
                 // query filedescription from file with given codepage & language id
                 RtlSecureZeroMemory(szBuffer, sizeof(szBuffer));
-                
+
                 rtl_swprintf_s(szBuffer, MAX_PATH, VERSION_DESCRIPTION,
                     lpTranslate[0].wLanguage, lpTranslate[0].wCodePage);
 
@@ -3651,8 +3646,6 @@ HANDLE supxGetSystemToken(
     HANDLE hObject = NULL;
     HANDLE hToken = NULL;
 
-    OBJECT_ATTRIBUTES obja = RTL_INIT_OBJECT_ATTRIBUTES((PUNICODE_STRING)NULL, 0);
-
     union {
         PSYSTEM_PROCESSES_INFORMATION Processes;
         PBYTE ListRef;
@@ -3667,11 +3660,11 @@ HANDLE supxGetSystemToken(
         if (List.Processes->ThreadCount &&
             List.Processes->InheritedFromUniqueProcessId)
         {
-            if (NT_SUCCESS(NtOpenProcess(
-                &hObject,
+
+            if (NT_SUCCESS(supOpenProcess(
+                List.Processes->UniqueProcessId,
                 PROCESS_QUERY_INFORMATION,
-                &obja,
-                &List.Processes->Threads[0].ClientId)))
+                &hObject)))
             {
 
                 if (NT_SUCCESS(NtOpenProcessToken(
@@ -4312,17 +4305,17 @@ HANDLE supOpenObjectFromContext(
         if (Context->ContextType == propUnnamed) {
 
             status = supOpenProcessEx(
-                Context->UnnamedObjectInfo.Process->UniqueProcessId,
+                Context->UnnamedObjectInfo.ClientId.UniqueProcess,
                 &hObject);
 
             if (!NT_SUCCESS(status)) {
 
-                clientId.UniqueProcess = Context->UnnamedObjectInfo.Process->UniqueProcessId;
-                    clientId.UniqueThread = NULL;
+                clientId.UniqueProcess = Context->UnnamedObjectInfo.ClientId.UniqueProcess;
+                clientId.UniqueThread = NULL;
 
-                    status = NtOpenProcess(&hObject, DesiredAccess,
-                        ObjectAttributes,
-                        &clientId);
+                status = NtOpenProcess(&hObject, DesiredAccess,
+                    ObjectAttributes,
+                    &clientId);
             }
         }
         else
@@ -4334,7 +4327,7 @@ HANDLE supOpenObjectFromContext(
         if (Context->ContextType == propUnnamed) {
             status = NtOpenThread(&hObject, DesiredAccess,
                 ObjectAttributes,
-                &Context->UnnamedObjectInfo.Thread->ClientId);
+                &Context->UnnamedObjectInfo.ClientId);
         }
         else
             status = STATUS_INVALID_PARAMETER;
@@ -4836,8 +4829,7 @@ NTSTATUS supOpenProcess(
 *
 */
 NTSTATUS supOpenThread(
-    _In_ HANDLE UniqueProcessId,
-    _In_ HANDLE UniqueThreadId,
+    _In_ PCLIENT_ID ClientId,
     _In_ ACCESS_MASK DesiredAccess,
     _Out_ PHANDLE ThreadHandle
 )
@@ -4845,12 +4837,8 @@ NTSTATUS supOpenThread(
     NTSTATUS Status;
     HANDLE Handle = NULL;
     OBJECT_ATTRIBUTES ObjectAttributes = RTL_INIT_OBJECT_ATTRIBUTES((PUNICODE_STRING)NULL, 0);
-    CLIENT_ID ClientId;
 
-    ClientId.UniqueProcess = UniqueProcessId;
-    ClientId.UniqueThread = UniqueThreadId;
-
-    Status = NtOpenThread(&Handle, DesiredAccess, &ObjectAttributes, &ClientId);
+    Status = NtOpenThread(&Handle, DesiredAccess, &ObjectAttributes, ClientId);
 
     if (NT_SUCCESS(Status)) {
         *ThreadHandle = Handle;
@@ -5102,32 +5090,34 @@ int __cdecl supxHandlesLookupCallback(
 *
 * Purpose:
 *
-* Create sorted list of current process handles.
+* Create sorted handles list of given process.
 *
 */
 PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
-    _In_ PSYSTEM_HANDLE_INFORMATION_EX HandleDump
+    _In_ ULONG_PTR FilterUniqueProcessId
 )
 {
-    DWORD  CurrentProcessId = GetCurrentProcessId();
-    PSYSTEM_HANDLE_INFORMATION_EX Result;
+    PSYSTEM_HANDLE_INFORMATION_EX Result = NULL, HandleDump;
     ULONG_PTR i, NumOfElements = 0;
 
-    Result = (PSYSTEM_HANDLE_INFORMATION_EX)supHeapAlloc(HandleDump->NumberOfHandles);
-    if (Result) {
-        for (i = 0; i < HandleDump->NumberOfHandles; i++) {
-            if (HandleDump->Handles[i].UniqueProcessId == (ULONG_PTR)CurrentProcessId) {
-
-                Result->Handles[NumOfElements].Object = HandleDump->Handles[i].Object;
-                Result->Handles[NumOfElements].HandleValue = HandleDump->Handles[i].HandleValue;
-                NumOfElements++;
+    HandleDump = (PSYSTEM_HANDLE_INFORMATION_EX)supGetSystemInfo(SystemExtendedHandleInformation, NULL);
+    if (HandleDump) {
+        Result = (PSYSTEM_HANDLE_INFORMATION_EX)supHeapAlloc(HandleDump->NumberOfHandles);
+        if (Result) {
+            for (i = 0; i < HandleDump->NumberOfHandles; i++) {
+                if (HandleDump->Handles[i].UniqueProcessId == FilterUniqueProcessId) {
+                    Result->Handles[NumOfElements].Object = HandleDump->Handles[i].Object;
+                    Result->Handles[NumOfElements].HandleValue = HandleDump->Handles[i].HandleValue;
+                    NumOfElements++;
+                }
             }
-        }
 
-        Result->NumberOfHandles = NumOfElements;
-        rtl_qsort((PVOID)&Result->Handles, NumOfElements, 
-            sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX), 
-            supxHandlesLookupCallback);
+            Result->NumberOfHandles = NumOfElements;
+            rtl_qsort((PVOID)&Result->Handles, NumOfElements,
+                sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
+                supxHandlesLookupCallback);
+        }
+        supHeapFree(HandleDump);
     }
 
     return Result;
@@ -5142,7 +5132,7 @@ PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
 *
 */
 BOOL supHandlesFreeList(
-    _In_ PSYSTEM_HANDLE_INFORMATION_EX SortedHandleList
+    PSYSTEM_HANDLE_INFORMATION_EX SortedHandleList
 )
 {
     if (SortedHandleList) {
@@ -5167,9 +5157,9 @@ BOOL supHandlesQueryObjectAddress(
 {
     SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX *SearchResult, SearchEntry;
     if (SortedHandleList) {
-        
+
         SearchEntry.HandleValue = (ULONG_PTR)ObjectHandle;
-        
+
         SearchResult = (PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)supBSearch(
             (PCVOID)&SearchEntry,
             SortedHandleList->Handles,
@@ -5186,3 +5176,31 @@ BOOL supHandlesQueryObjectAddress(
     return FALSE;
 }
 
+/*
+* supCICustomKernelSignersAllowed
+*
+* Purpose:
+*
+* Return license state if present (EnterpriseG).
+*
+*/
+NTSTATUS supCICustomKernelSignersAllowed(
+    _Out_ PBOOLEAN bAllowed)
+{
+    NTSTATUS Status;
+    ULONG Result = 0, DataSize;
+    UNICODE_STRING usLicenseValue = RTL_CONSTANT_STRING(L"CodeIntegrity-AllowConfigurablePolicy-CustomKernelSigners");
+
+    *bAllowed = FALSE;
+
+    Status = NtQueryLicenseValue(&usLicenseValue, 
+        NULL, 
+        (PVOID)&Result, 
+        sizeof(DWORD), 
+        &DataSize);
+
+    if (NT_SUCCESS(Status)) {
+        *bAllowed = (Result != 0);
+    }
+    return Status;
+}

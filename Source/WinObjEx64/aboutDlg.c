@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        07 Mar 2019
+*  DATE:        17 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -165,6 +165,8 @@ VOID AboutDialogCollectGlobals(
     _In_ LPWSTR lpDestBuffer
 )
 {
+    BOOLEAN bAllowed;
+
     GetDlgItemText(hwndParent, ID_ABOUT_OSNAME, lpDestBuffer, MAX_PATH);
 
     _strcat(lpDestBuffer, TEXT("\r\n"));
@@ -239,6 +241,14 @@ VOID AboutDialogCollectGlobals(
     _strcat(lpDestBuffer, TEXT("SystemRangeStart: 0x"));
     u64tohex((ULONG_PTR)g_kdctx.SystemRangeStart, _strend(lpDestBuffer));
     _strcat(lpDestBuffer, TEXT("\r\n"));
+
+    if (NT_SUCCESS(supCICustomKernelSignersAllowed(&bAllowed))) {
+        _strcat(lpDestBuffer, TEXT("Licensed for Custom Kernel Signers: "));
+        if (bAllowed)
+            _strcat(lpDestBuffer, TEXT("yes\r\n"));
+        else
+            _strcat(lpDestBuffer, TEXT("no\r\n"));
+    }
 }
 
 /*

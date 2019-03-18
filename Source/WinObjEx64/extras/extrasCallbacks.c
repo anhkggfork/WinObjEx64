@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        12 Mar 2019
+*  DATE:        17 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -2882,8 +2882,8 @@ VOID CallbacksList(
             g_SystemCallbacks.CiCallbacks = (ULONG_PTR)KdFindCiCallbacks(&g_kdctx);
 
     }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-        MessageBox(hwndDlg, TEXT("An exception occured during callback query"), NULL, MB_ICONERROR);
+    __except (exceptFilter(GetExceptionCode(), GetExceptionInformation())) {
+        return;
     }
 
     __try {

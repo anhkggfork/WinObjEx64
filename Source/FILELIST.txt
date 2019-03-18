@@ -9,6 +9,10 @@ excepth.h
 extras.c - extras menu handler
 extras.h
 
+extapi.c - Windows 7 missing API support
+extapi.h
+extdef.h - SDK 8.1 missing definitions support
+
 extrasCallbacks.c - Callbacks list
 extrasCallbacks.h
 
