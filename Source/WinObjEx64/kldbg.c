@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        12 Mar 2019
+*  DATE:        18 Mar 2019
 *
 *  MINIMUM SUPPORTED OS WINDOWS 7
 *
@@ -1280,7 +1280,7 @@ BOOL kdFindKiServiceTables(
 * Purpose:
 *
 * Obtain directory object kernel address by opening directory by name
-* and quering resulted handle in NtQuerySystemInformation(SystemHandleInformation) handle dump
+* and quering resulted handle in NtQuerySystemInformation(SystemExtendedHandleInformation) handle dump
 *
 */
 BOOL ObGetDirectoryObjectAddress(

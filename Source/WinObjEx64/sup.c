@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        17 Mar 2019
+*  DATE:        18 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -5097,12 +5097,14 @@ PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
     _In_ ULONG_PTR FilterUniqueProcessId
 )
 {
+    ULONG DumpSize = 0;
     PSYSTEM_HANDLE_INFORMATION_EX Result = NULL, HandleDump;
     ULONG_PTR i, NumOfElements = 0;
 
-    HandleDump = (PSYSTEM_HANDLE_INFORMATION_EX)supGetSystemInfo(SystemExtendedHandleInformation, NULL);
+    HandleDump = (PSYSTEM_HANDLE_INFORMATION_EX)supGetSystemInfo(SystemExtendedHandleInformation, &DumpSize);
     if (HandleDump) {
-        Result = (PSYSTEM_HANDLE_INFORMATION_EX)supHeapAlloc(HandleDump->NumberOfHandles);
+
+        Result = (PSYSTEM_HANDLE_INFORMATION_EX)supHeapAlloc(DumpSize);
         if (Result) {
             for (i = 0; i < HandleDump->NumberOfHandles; i++) {
                 if (HandleDump->Handles[i].UniqueProcessId == FilterUniqueProcessId) {

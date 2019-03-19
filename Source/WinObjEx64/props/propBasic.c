@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        17 Mar 2019
+*  DATE:        18 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -1654,10 +1654,19 @@ VOID propBasicQueryProcess(
                     &memIO)))
                 {
                     dynUstr = (PUNICODE_STRING)Buffer;
-                    if (dynUstr->Buffer) {
-                        SetDlgItemText(hwndDlg, IDC_PROCESS_FILENAME, dynUstr->Buffer);
-                        EnableWindow(GetDlgItem(hwndDlg, IDC_PROCESS_BROWSE), TRUE);
-                        bSuccess = TRUE;
+                    if ((dynUstr->Length) && (dynUstr->MaximumLength)) {
+
+                        Name = (LPWSTR)supHeapAlloc(sizeof(UNICODE_NULL) + dynUstr->MaximumLength);
+                        if (Name) {
+
+                            RtlCopyMemory(Name, dynUstr->Buffer, dynUstr->Length);
+                            SetDlgItemText(hwndDlg, IDC_PROCESS_FILENAME, Name);
+                            EnableWindow(GetDlgItem(hwndDlg, IDC_PROCESS_BROWSE), TRUE);
+                            bSuccess = TRUE;
+
+                            supHeapFree(Name);
+                            Name = NULL;
+                        }
                     }
                 }
                 supHeapFree(Buffer);
@@ -1690,9 +1699,19 @@ VOID propBasicQueryProcess(
                         &memIO)))
                     {
                         dynUstr = (PUNICODE_STRING)Buffer;
-                        if (dynUstr->Buffer) {
-                            SetDlgItemText(hwndDlg, IDC_PROCESS_CMDLINE, dynUstr->Buffer);
-                            bSuccess = TRUE;
+                        if ((dynUstr->Length) && (dynUstr->MaximumLength)) {
+
+                            Name = (LPWSTR)supHeapAlloc((SIZE_T)dynUstr->MaximumLength + sizeof(UNICODE_NULL));
+                            if (Name) {
+
+                                RtlCopyMemory(Name, dynUstr->Buffer, dynUstr->Length);
+
+                                SetDlgItemText(hwndDlg, IDC_PROCESS_CMDLINE, Name);
+                                bSuccess = TRUE;
+
+                                supHeapFree(Name);
+                                Name = NULL;
+                            }
                         }
                     }
                     supHeapFree(Buffer);
@@ -1706,14 +1725,14 @@ VOID propBasicQueryProcess(
             if (ProcessParametersRead) {
 
                 readBytes = UserProcessParameters.CommandLine.MaximumLength;
-                Buffer = (PBYTE)supHeapAlloc(readBytes);
+                Buffer = (PBYTE)supHeapAlloc(readBytes + sizeof(UNICODE_NULL));
                 if (Buffer) {
 
                     if (NT_SUCCESS(NtReadVirtualMemory(
                         hObject,
                         UserProcessParameters.CommandLine.Buffer,
                         Buffer,
-                        readBytes,
+                        UserProcessParameters.CommandLine.Length,
                         &readBytes)))
                     {
                         SetDlgItemText(hwndDlg, IDC_PROCESS_CMDLINE, (LPCWSTR)Buffer);
@@ -1735,7 +1754,7 @@ VOID propBasicQueryProcess(
         bSuccess = FALSE;
         if (ProcessParametersRead) {
             readBytes = UserProcessParameters.CurrentDirectory.DosPath.MaximumLength;
-            Buffer = (PBYTE)supHeapAlloc(readBytes);
+            Buffer = (PBYTE)supHeapAlloc(readBytes + sizeof(UNICODE_NULL));
             if (Buffer) {
 
                 if (NT_SUCCESS(NtReadVirtualMemory(

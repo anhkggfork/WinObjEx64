@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        09 Mar 2019
+*  DATE:        18 Mar 2019
 *
 *  Header file for internal Windows object types handling.
 *
@@ -153,7 +153,6 @@ static WOBJ_TYPE_DESC g_ObjectTypes[] = {
     { L"KeyedEvent", ObjectTypeKeyedEvent, IDI_ICON_KEYEDEVENT, IDS_DESC_KEYEDEVENT },
     { L"Mutant", ObjectTypeMutant, IDI_ICON_MUTANT, IDS_DESC_MUTANT },
     //{ L"NdisCmState", ObjectTypeNdisCmState, IDI_ICON_NDISCMSTATE, IDS_DESC_NDISCMSTATE },
-    { L"ObjectType", ObjectTypeType, IDI_ICON_TYPE, IDS_DESC_TYPE }, //Wine 4.x
     { L"Partition", ObjectTypeMemoryPartition, IDI_ICON_MEMORYPARTITION, IDS_DESC_MEMORY_PARTITION },
     { L"PcwObject", ObjectTypePcwObject, IDI_ICON_PCWOBJECT, IDS_DESC_PCWOBJECT },
     { L"PowerRequest", ObjectTypePowerRequest, IDI_ICON_POWERREQUEST, IDS_DESC_POWERREQUEST },

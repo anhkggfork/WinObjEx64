@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        16 Mar 2019
+*  DATE:        18 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -32,7 +32,7 @@ EXTRASCONTEXT   PsDlgContext;
 static int      y_splitter_pos = 300, y_capture_pos = 0, y_splitter_max = 0;
 
 HANDLE g_PsListWait = NULL;
-ULONG g_DialogQuit = 0, g_DialogRefresh = 0;
+ULONG g_DialogQuit = 0;
 HANDLE g_PsListHeap = NULL;
 
 /*
@@ -75,7 +75,7 @@ PROP_UNNAMED_OBJECT_INFO *PsxAllocateUnnamedObjectEntry(
             RtlCopyUnicodeString(&objectEntry->ImageName, &processEntry->ImageName);
         }
     }
-    else if (ObjectType == ObjectTypeThread) 
+    else if (ObjectType == ObjectTypeThread)
     {
         threadEntry = (PSYSTEM_THREAD_INFORMATION)Data;
 
@@ -797,7 +797,6 @@ DWORD WINAPI CreateThreadListProc(
             ProcessList = NULL;
 
             SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId());
-
             stlptr = stl;
 
             for (i = 0; i < ThreadCount; i++, stlptr++) {
@@ -967,7 +966,7 @@ DWORD WINAPI CreateThreadListProc(
 DWORD WINAPI CreateProcessListProc(
     PVOID Parameter
 )
-{ 
+{
     BOOL bRefresh = (BOOL)PtrToInt(Parameter);
     DWORD ServiceEnumType, dwWaitResult;
     ULONG NextEntryDelta = 0, NumberOfProcesses = 0, NumberOfThreads = 0, ReturnLength = 0;
@@ -998,8 +997,6 @@ DWORD WINAPI CreateProcessListProc(
     __try {
         dwWaitResult = WaitForSingleObject(g_PsListWait, INFINITE);
         if (dwWaitResult == WAIT_OBJECT_0) {
-
-            InterlockedIncrement((PLONG)&g_DialogRefresh);
 
             if (bRefresh) {
                 HeapDestroy(g_PsListHeap);
@@ -1147,7 +1144,6 @@ DWORD WINAPI CreateProcessListProc(
 
         supHandlesFreeList(SortedHandleList);
 
-        InterlockedDecrement((PLONG)&g_DialogRefresh);
         ReleaseMutex(g_PsListWait);
     }
     return 0;
@@ -1217,7 +1213,7 @@ INT_PTR PsListHandleNotify(
 
     UNREFERENCED_PARAMETER(hwndDlg);
 
-    if ((g_DialogRefresh) || (nhdr == NULL) || (g_DialogQuit))
+    if ((nhdr == NULL) || (g_DialogQuit))
         return 0;
 
     TreeControl = (HWND)TreeList_GetTreeControlWindow(PsDlgContext.TreeList);
@@ -1394,7 +1390,7 @@ INT_PTR CALLBACK PsListDialogProc(
                 supCopyListViewSubItemValue(PsDlgContext.ListView, 3);
             }
             break;
-        case ID_VIEW_REFRESH:            
+        case ID_VIEW_REFRESH:
             CreateObjectList(FALSE, IntToPtr(TRUE));
             break;
 
@@ -1612,7 +1608,6 @@ VOID extrasCreatePsListDialog(
     PsListDialogResize();
 
     g_DialogQuit = 0;
-    g_DialogRefresh = 0;
     g_PsListWait = CreateMutex(NULL, FALSE, NULL);
     g_PsListHeap = HeapCreate(0, 0, 0);
     if (g_PsListHeap) {
