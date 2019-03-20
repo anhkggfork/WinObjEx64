@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        11 Mar 2019
+*  DATE:        19 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -3533,6 +3533,7 @@ VOID propObDumpSymbolicLink(
     _In_ HWND hwndDlg
 )
 {
+    BOOLEAN IsCallbackLink = FALSE;
     HTREEITEM h_tviRootItem;
 
     PBYTE SymLinkDumpBuffer = NULL;
@@ -3632,7 +3633,20 @@ VOID propObDumpSymbolicLink(
         TEXT("CreationTime"),
         &subitems);
 
-    propObDumpUnicodeString(g_TreeList, h_tviRootItem, TEXT("LinkTarget"), &SymbolicLink.u1.LinkV1->LinkTarget, FALSE);
+    if (ObjectVersion > 3) {
+        IsCallbackLink = (SymbolicLink.u1.LinkV4->Flags & 0x10);
+    }
+
+    if (IsCallbackLink) {
+        propObDumpAddress(g_TreeList, h_tviRootItem, TEXT("Callback"), NULL, 
+            SymbolicLink.u1.LinkV4->u1.Callback, 0, 0);
+        propObDumpAddress(g_TreeList, h_tviRootItem, TEXT("CallbackContext"), NULL, 
+            SymbolicLink.u1.LinkV4->u1.CallbackContext, 0, 0);
+    }
+    else {
+        propObDumpUnicodeString(g_TreeList, h_tviRootItem, TEXT("LinkTarget"), &SymbolicLink.u1.LinkV1->LinkTarget, FALSE);
+    }
+
     propObDumpUlong(g_TreeList, h_tviRootItem, TEXT("DosDeviceDriveIndex"), NULL, SymbolicLink.u1.LinkV1->DosDeviceDriveIndex, TRUE, FALSE, 0, 0);
 
     //

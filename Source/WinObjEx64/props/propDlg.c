@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        17 Mar 2019
+*  DATE:        19 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -571,7 +571,7 @@ VOID propCopyUnnamedObject(
 *
 */
 VOID propCreateDialog(
-    _In_ HWND hwndParent,
+    _In_opt_ HWND hwndParent,
     _In_ LPWSTR lpObjectName,
     _In_ LPCWSTR lpObjectType,
     _In_opt_ LPWSTR lpDescription,

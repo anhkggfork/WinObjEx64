@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        18 Mar 2019
+*  DATE:        19 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -41,7 +41,10 @@ POBJECT_TYPES_INFORMATION g_pObjectTypesInfo = NULL;
 LPWSTR	g_lpKnownDlls32;
 LPWSTR	g_lpKnownDlls64;
 
-#ifdef _DEBUG
+//#define _PROFILE_MEMORY_USAGE_
+
+
+#ifdef _PROFILE_MEMORY_USAGE_
 ULONG g_cHeapAlloc = 0;
 #endif
 
@@ -185,8 +188,10 @@ BOOL supHeapFree(
 * Wrapper for NtAllocateVirtualMemory.
 *
 */
-PVOID supVirtualAlloc(
-    _In_ SIZE_T Size)
+PVOID supVirtualAllocEx(
+    _In_ SIZE_T Size,
+    _In_ ULONG AllocationType,
+    _In_ ULONG Protect)
 {
     NTSTATUS Status;
     PVOID Buffer = NULL;
@@ -198,8 +203,8 @@ PVOID supVirtualAlloc(
         &Buffer,
         0,
         &size,
-        MEM_COMMIT | MEM_RESERVE,
-        PAGE_READWRITE);
+        AllocationType,
+        Protect);
 
     if (NT_SUCCESS(Status)) {
         RtlSecureZeroMemory(Buffer, size);
@@ -208,6 +213,20 @@ PVOID supVirtualAlloc(
 
     SetLastError(RtlNtStatusToDosError(Status));
     return NULL;
+}
+
+/*
+* supVirtualAlloc
+*
+* Purpose:
+*
+* Wrapper for supVirtualAllocEx.
+*
+*/
+PVOID supVirtualAlloc(
+    _In_ SIZE_T Size)
+{
+    return supVirtualAllocEx(Size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 }
 
 /*
@@ -827,7 +846,7 @@ PVOID supGetSystemInfo(
             Buffer = NULL;
             Size *= 2;
             c++;
-            if (c > 20) {
+            if (c >= 20) {
                 status = STATUS_SECRET_TOO_LONG;
                 break;
             }
@@ -3531,25 +3550,27 @@ PSID supQueryTokenUserSid(
     PSID result = NULL;
     PTOKEN_USER ptu;
     NTSTATUS status;
-    ULONG LengthNeeded = 0;
+    ULONG SidLength = 0, Length;
 
     status = NtQueryInformationToken(hProcessToken, TokenUser,
-        NULL, 0, &LengthNeeded);
+        NULL, 0, &SidLength);
 
     if (status == STATUS_BUFFER_TOO_SMALL) {
 
-        ptu = (PTOKEN_USER)supHeapAlloc(LengthNeeded);
+        ptu = (PTOKEN_USER)supHeapAlloc(SidLength);
 
         if (ptu) {
 
             status = NtQueryInformationToken(hProcessToken, TokenUser,
-                ptu, LengthNeeded, &LengthNeeded);
+                ptu, SidLength, &SidLength);
 
             if (NT_SUCCESS(status)) {
-                LengthNeeded = SECURITY_MAX_SID_SIZE;
-                result = supHeapAlloc(LengthNeeded);
+                Length = SECURITY_MAX_SID_SIZE;
+                if (SidLength > Length)
+                    Length = SidLength;
+                result = supHeapAlloc(Length);
                 if (result) {
-                    status = RtlCopySid(LengthNeeded, result, ptu->User.Sid);
+                    status = RtlCopySid(Length, result, ptu->User.Sid);
                 }
             }
 
@@ -4592,6 +4613,7 @@ PVOID supBSearch(
 * Request process mitigation policy values.
 *
 */
+_Success_(return != FALSE)
 BOOL supGetProcessMitigationPolicy(
     _In_ HANDLE hProcess,
     _In_ PROCESS_MITIGATION_POLICY Policy,
@@ -4600,7 +4622,10 @@ BOOL supGetProcessMitigationPolicy(
 )
 {
     ULONG Length = 0;
-    PROCESS_MITIGATION_POLICY_INFORMATION MitigationPolicy;
+    PROCESS_MITIGATION_POLICY_RAW_DATA MitigationPolicy;
+
+    if (Size != sizeof(DWORD))
+        return FALSE;
 
     MitigationPolicy.Policy = (PROCESS_MITIGATION_POLICY)Policy;
 
@@ -4608,13 +4633,14 @@ BOOL supGetProcessMitigationPolicy(
         hProcess,
         ProcessMitigationPolicy,
         &MitigationPolicy,
-        sizeof(PROCESS_MITIGATION_POLICY_INFORMATION),
+        sizeof(PROCESS_MITIGATION_POLICY_RAW_DATA),
         &Length)))
     {
         return FALSE;
-    }
+    }   
 
-    RtlCopyMemory(Buffer, &MitigationPolicy, Size);
+
+    RtlCopyMemory(Buffer, &MitigationPolicy.Value, Size);
 
     return TRUE;
 }
@@ -5092,35 +5118,92 @@ int __cdecl supxHandlesLookupCallback(
 *
 * Create sorted handles list of given process.
 *
+* Use supHandlesFreeList to release allocated memory.
+*
 */
 PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
     _In_ ULONG_PTR FilterUniqueProcessId
 )
 {
-    ULONG DumpSize = 0;
     PSYSTEM_HANDLE_INFORMATION_EX Result = NULL, HandleDump;
     ULONG_PTR i, NumOfElements = 0;
 
-    HandleDump = (PSYSTEM_HANDLE_INFORMATION_EX)supGetSystemInfo(SystemExtendedHandleInformation, &DumpSize);
-    if (HandleDump) {
+    NTSTATUS Status = STATUS_SUCCESS;
+    ULONG ReturnLength = 0;
+    ULONG BufferSize = INITIAL_BUFFER_SIZE;
+    SIZE_T stBufferSize;
 
-        Result = (PSYSTEM_HANDLE_INFORMATION_EX)supHeapAlloc(DumpSize);
-        if (Result) {
-            for (i = 0; i < HandleDump->NumberOfHandles; i++) {
-                if (HandleDump->Handles[i].UniqueProcessId == FilterUniqueProcessId) {
-                    Result->Handles[NumOfElements].Object = HandleDump->Handles[i].Object;
-                    Result->Handles[NumOfElements].HandleValue = HandleDump->Handles[i].HandleValue;
-                    NumOfElements++;
-                }
+    PVOID RawBuffer = NULL;
+
+    __try {
+
+        do {
+
+            stBufferSize = BufferSize;
+
+            RawBuffer = supVirtualAllocEx(stBufferSize, MEM_COMMIT, PAGE_READWRITE);
+            if (RawBuffer == NULL) {
+                Status = STATUS_MEMORY_NOT_ALLOCATED;
+                break;
             }
 
-            Result->NumberOfHandles = NumOfElements;
-            rtl_qsort((PVOID)&Result->Handles, NumOfElements,
-                sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
-                supxHandlesLookupCallback);
-        }
-        supHeapFree(HandleDump);
+            BufferSize = (ULONG)stBufferSize;
+
+            Status = NtQuerySystemInformation(SystemExtendedHandleInformation,
+                RawBuffer,
+                BufferSize,
+                &ReturnLength);
+
+            if (Status == STATUS_INFO_LENGTH_MISMATCH) {
+
+                supVirtualFree(RawBuffer);
+
+                BufferSize += INITIAL_BUFFER_SIZE;
+            }
+
+        } while (Status == STATUS_INFO_LENGTH_MISMATCH);
+
     }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        Status = GetExceptionCode();
+        RawBuffer = NULL;
+    }
+
+    if (!NT_SUCCESS(Status)) {
+        if (RawBuffer) {
+            supVirtualFree(RawBuffer);
+        }
+        return NULL;
+    }
+
+    HandleDump = (PSYSTEM_HANDLE_INFORMATION_EX)RawBuffer;
+
+    stBufferSize = sizeof(SYSTEM_HANDLE_INFORMATION_EX) +
+        HandleDump->NumberOfHandles * sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX);
+
+    Result = (PSYSTEM_HANDLE_INFORMATION_EX)supVirtualAllocEx(
+        ALIGN_UP_BY(stBufferSize, PAGE_SIZE),
+        MEM_COMMIT,
+        PAGE_READWRITE);
+
+    if (Result) {
+        for (i = 0; i < HandleDump->NumberOfHandles; i++) {
+            if (HandleDump->Handles[i].UniqueProcessId == FilterUniqueProcessId) {
+                Result->Handles[NumOfElements].Object = HandleDump->Handles[i].Object;
+                Result->Handles[NumOfElements].HandleValue = HandleDump->Handles[i].HandleValue;
+                NumOfElements++;
+            }
+        }
+
+        Result->NumberOfHandles = NumOfElements;
+
+        rtl_qsort((PVOID)&Result->Handles,
+            NumOfElements,
+            sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
+            supxHandlesLookupCallback);
+    }
+
+    supVirtualFree(RawBuffer);
 
     return Result;
 }
@@ -5138,7 +5221,7 @@ BOOL supHandlesFreeList(
 )
 {
     if (SortedHandleList) {
-        return supHeapFree(SortedHandleList);
+        return supVirtualFree(SortedHandleList);
     }
     return FALSE;
 }
@@ -5158,22 +5241,21 @@ BOOL supHandlesQueryObjectAddress(
 )
 {
     SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX *SearchResult, SearchEntry;
-    if (SortedHandleList) {
 
-        SearchEntry.HandleValue = (ULONG_PTR)ObjectHandle;
+    SearchEntry.HandleValue = (ULONG_PTR)ObjectHandle;
 
-        SearchResult = (PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)supBSearch(
-            (PCVOID)&SearchEntry,
-            SortedHandleList->Handles,
-            SortedHandleList->NumberOfHandles,
-            sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
-            supxHandlesLookupCallback);
+    SearchResult = (PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)supBSearch(
+        (PCVOID)&SearchEntry,
+        SortedHandleList->Handles,
+        SortedHandleList->NumberOfHandles,
+        sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
+        supxHandlesLookupCallback);
 
-        if (SearchResult) {
-            *ObjectAddress = (ULONG_PTR)SearchResult->Object;
-            return TRUE;
-        }
+    if (SearchResult) {
+        *ObjectAddress = (ULONG_PTR)SearchResult->Object;
+        return TRUE;
     }
+    
     *ObjectAddress = 0;
     return FALSE;
 }

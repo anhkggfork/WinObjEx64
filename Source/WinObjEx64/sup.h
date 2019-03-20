@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        17 Mar 2019
+*  DATE:        19 Mar 2019
 *
 *  Common header file for the program support routines.
 *
@@ -26,6 +26,8 @@
 
 #define IOCTL_PE_OPEN_PROCESS_TOKEN     CTL_CODE(PE_DEVICE_TYPE, 0x3, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_PE_OPEN_PROCESS           CTL_CODE(PE_DEVICE_TYPE, 0xF, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define INITIAL_BUFFER_SIZE (256) * (1024)
 
 typedef struct _SAPIDB {
     LIST_ENTRY ListHead;
@@ -58,10 +60,10 @@ typedef struct _OBEX_THREAD_LOOKUP_ENTRY {
 typedef struct _PROCESS_MITIGATION_POLICIES_ALL {
     PROCESS_MITIGATION_DEP_POLICY DEPPolicy;
     PROCESS_MITIGATION_ASLR_POLICY ASLRPolicy;
+    PROCESS_MITIGATION_DYNAMIC_CODE_POLICY_W10 DynamicCodePolicy;
     PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY StrictHandleCheckPolicy;
     PROCESS_MITIGATION_SYSTEM_CALL_DISABLE_POLICY_W10 SystemCallDisablePolicy;
     PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY ExtensionPointDisablePolicy;
-    PROCESS_MITIGATION_DYNAMIC_CODE_POLICY_W10 DynamicCodePolicy;
     PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY_W10 ControlFlowGuardPolicy;
     PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY_W10 SignaturePolicy;
     PROCESS_MITIGATION_FONT_DISABLE_POLICY_W10 FontDisablePolicy;
@@ -71,6 +73,11 @@ typedef struct _PROCESS_MITIGATION_POLICIES_ALL {
     PROCESS_MITIGATION_CHILD_PROCESS_POLICY_W10 ChildProcessPolicy;
     PROCESS_MITIGATION_SIDE_CHANNEL_ISOLATION_POLICY_W10 SideChannelIsolationPolicy;
 } PROCESS_MITIGATION_POLICIES_ALL, *PPROCESS_MITIGATION_POLICIES;
+
+typedef struct _PROCESS_MITIGATION_POLICY_RAW_DATA {
+    PROCESS_MITIGATION_POLICY Policy;
+    ULONG Value;
+} PROCESS_MITIGATION_POLICY_RAW_DATA, *PPROCESS_MITIGATION_POLICY_RAW_DATA;
 
 #define GET_BIT(Integer, Bit) (((Integer) >> (Bit)) & 0x1)
 #define SET_BIT(Integer, Bit) ((Integer) |= 1 << (Bit))
@@ -119,6 +126,11 @@ PVOID supHeapAlloc(
 BOOL supHeapFree(
     _In_ PVOID Memory);
 #endif
+
+PVOID supVirtualAllocEx(
+    _In_ SIZE_T Size,
+    _In_ ULONG AllocationType,
+    _In_ ULONG Protect);
 
 PVOID supVirtualAlloc(
     _In_ SIZE_T Size);
@@ -479,6 +491,7 @@ BOOL supGetProcessDepState(
     _In_ HANDLE hProcess,
     _Out_ PPROCESS_MITIGATION_DEP_POLICY DepPolicy);
 
+_Success_(return != FALSE)
 BOOL supGetProcessMitigationPolicy(
     _In_ HANDLE hProcess,
     _In_ PROCESS_MITIGATION_POLICY Policy,

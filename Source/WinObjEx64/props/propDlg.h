@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        06 Mar 2019
+*  DATE:        19 Mar 2019
 *
 *  Common header file for properties dialog.
 *
@@ -40,7 +40,7 @@ BOOL propCloseCurrentObject(
     _In_ HANDLE hObject);
 
 VOID propCreateDialog(
-    _In_ HWND hwndParent,
+    _In_opt_ HWND hwndParent,
     _In_ LPWSTR lpObjectName,
     _In_ LPCWSTR lpObjectType,
     _In_opt_ LPWSTR lpDescription,

@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        18 Mar 2019
+*  DATE:        19 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -32,8 +32,17 @@ EXTRASCONTEXT   PsDlgContext;
 static int      y_splitter_pos = 300, y_capture_pos = 0, y_splitter_max = 0;
 
 HANDLE g_PsListWait = NULL;
-ULONG g_DialogQuit = 0;
+ULONG g_DialogQuit = 0, g_DialogRefresh = 0;
 HANDLE g_PsListHeap = NULL;
+
+typedef	struct _CACHED_HANDLE_ENTRY {
+    LIST_ENTRY ListEntry;
+    HANDLE ProcessHandle;
+    HANDLE UniqueProcessId;
+} CACHED_HANDLE_ENTRY, *PCACHED_HANDLE_ENTRY;
+
+LIST_ENTRY g_PsListHead;
+
 
 /*
 * PsxAllocateUnnamedObjectEntry
@@ -378,6 +387,8 @@ BOOLEAN PsListProcessInServicesList(
 {
     ENUM_SERVICE_STATUS_PROCESS *SearchEntrySCM = NULL, EntrySCM;
 
+    if (ProcessId == NULL) return FALSE;
+
     EntrySCM.ServiceStatusProcess.dwProcessId = HandleToUlong(ProcessId);
 
     SearchEntrySCM = (ENUM_SERVICE_STATUS_PROCESS*)supBSearch(&EntrySCM,
@@ -399,7 +410,8 @@ BOOLEAN PsListProcessInServicesList(
 */
 HTREEITEM AddProcessEntryTreeList(
     _In_opt_ HTREEITEM RootItem,
-    _In_ OBEX_PROCESS_LOOKUP_ENTRY* Entry,
+    _In_opt_ HANDLE ProcessHandle,
+    _In_ PVOID Data,
     _In_ ULONG_PTR ObjectAddress,
     _In_opt_ SCMDB *ServicesList,
     _In_opt_ PSID OurSid
@@ -419,7 +431,7 @@ HTREEITEM AddProcessEntryTreeList(
 
     SID SidLocalService = { SID_REVISION, 1, SECURITY_NT_AUTHORITY, { SECURITY_LOCAL_SERVICE_RID } };
 
-    objectEntry = PsxAllocateUnnamedObjectEntry(Entry->EntryPtr, ObjectTypeProcess);
+    objectEntry = PsxAllocateUnnamedObjectEntry(Data, ObjectTypeProcess);
     if (objectEntry == NULL)
         return NULL;
 
@@ -483,8 +495,8 @@ HTREEITEM AddProcessEntryTreeList(
     //
     // 1. Services.
     //
-    if (Entry->hProcess) {
-        ProcessSid = supQueryProcessSid(Entry->hProcess);
+    if (ProcessHandle) {
+        ProcessSid = supQueryProcessSid(ProcessHandle);
     }
 
     if (ServicesList) {
@@ -512,17 +524,17 @@ HTREEITEM AddProcessEntryTreeList(
     // 3. Store process.
     // 4. Protected process.
     //
-    if (Entry->hProcess) {
+    if (ProcessHandle) {
 
         if (g_ExtApiSet.IsImmersiveProcess) {
-            if (g_ExtApiSet.IsImmersiveProcess(Entry->hProcess)) {
+            if (g_ExtApiSet.IsImmersiveProcess(ProcessHandle)) {
                 subitems.ColorFlags = TLF_BGCOLOR_SET;
                 subitems.BgColor = 0xeaea00;
             }
         }
 
         exbi.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
-        if (NT_SUCCESS(NtQueryInformationProcess(Entry->hProcess, ProcessBasicInformation,
+        if (NT_SUCCESS(NtQueryInformationProcess(ProcessHandle, ProcessBasicInformation,
             &exbi, sizeof(exbi), &r)))
         {
             if (exbi.IsProtectedProcess) {
@@ -955,6 +967,92 @@ DWORD WINAPI CreateThreadListProc(
     return 0;
 }
 
+HANDLE PsxGetHandleFromCachedHandleList(
+    _In_ HANDLE UniqueProcessId
+)
+{
+    PLIST_ENTRY Next, Head = &g_PsListHead;
+    CACHED_HANDLE_ENTRY *Item;
+
+    if (!IsListEmpty(&g_PsListHead)) {
+        Next = Head->Flink;
+        while ((Next != NULL) && (Next != Head)) {
+            Item = CONTAINING_RECORD(Next, CACHED_HANDLE_ENTRY, ListEntry);
+            if (Item->UniqueProcessId == UniqueProcessId)
+                return Item->ProcessHandle;
+            Next = Next->Flink;
+        }
+    }
+    return NULL;
+}
+
+VOID PsxFreeCachedHandleList()
+{
+    PLIST_ENTRY Next, Head = &g_PsListHead;
+    CACHED_HANDLE_ENTRY *Item;
+
+    if (!IsListEmpty(&g_PsListHead)) {
+        Next = Head->Flink;
+        while ((Next != NULL) && (Next != Head)) {
+            Item = CONTAINING_RECORD(Next, CACHED_HANDLE_ENTRY, ListEntry);
+            Next = Next->Flink;
+            if (Item) supHeapFree(Item);
+        }
+    }
+}
+
+BOOL PsxCreateCachedHandleList(
+    _In_ PBYTE ProcessList,
+    _Out_ PULONG NumberOfProcesses,
+    _Out_ PULONG NumberOfThreads
+)
+{
+    ULONG NextEntryDelta = 0;
+    ULONG numberOfThreads = 0, numberOfProcesses = 0;
+    CACHED_HANDLE_ENTRY *PsListItem;
+    union {
+        PSYSTEM_PROCESSES_INFORMATION ProcessEntry;
+        PBYTE ListRef;
+    } List;
+
+    List.ListRef = ProcessList;
+
+    InitializeListHead(&g_PsListHead);
+
+    do {
+
+        List.ListRef += NextEntryDelta;
+
+        numberOfThreads += List.ProcessEntry->ThreadCount;
+        numberOfProcesses += 1;
+        NextEntryDelta = List.ProcessEntry->NextEntryDelta;
+
+        PsListItem = (CACHED_HANDLE_ENTRY*)supHeapAlloc(sizeof(CACHED_HANDLE_ENTRY));
+        if (PsListItem) {
+
+            PsListItem->UniqueProcessId = List.ProcessEntry->UniqueProcessId;
+
+            if (List.ProcessEntry->ThreadCount) {
+
+                supOpenProcess(
+                    List.ProcessEntry->UniqueProcessId,
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                    &PsListItem->ProcessHandle);
+
+            }
+
+            InsertHeadList(&g_PsListHead, &PsListItem->ListEntry);
+
+        }
+
+    } while (NextEntryDelta);
+
+    *NumberOfThreads = numberOfThreads;
+    *NumberOfProcesses = numberOfProcesses;
+
+    return ((numberOfProcesses > 0) && (numberOfThreads > 0));
+}
+
 /*
 * CreateProcessListProc
 *
@@ -969,18 +1067,16 @@ DWORD WINAPI CreateProcessListProc(
 {
     BOOL bRefresh = (BOOL)PtrToInt(Parameter);
     DWORD ServiceEnumType, dwWaitResult;
-    ULONG NextEntryDelta = 0, NumberOfProcesses = 0, NumberOfThreads = 0, ReturnLength = 0;
+    ULONG NextEntryDelta = 0, nProcesses = 0, nThreads = 0;
 
     HTREEITEM ViewRootHandle;
 
     ULONG_PTR ObjectAddress;
 
-    HANDLE hProcess = NULL;
+    HANDLE ProcessHandle = NULL;
     PVOID InfoBuffer = NULL;
     PSYSTEM_HANDLE_INFORMATION_EX SortedHandleList = NULL;
     PSID OurSid = NULL;
-
-    OBEX_PROCESS_LOOKUP_ENTRY *spl = NULL, *LookupEntry;
 
     SCMDB ServicesList;
 
@@ -998,15 +1094,17 @@ DWORD WINAPI CreateProcessListProc(
         dwWaitResult = WaitForSingleObject(g_PsListWait, INFINITE);
         if (dwWaitResult == WAIT_OBJECT_0) {
 
-            if (bRefresh) {
-                HeapDestroy(g_PsListHeap);
-                g_PsListHeap = HeapCreate(0, 0, 0);
-                if (g_PsListHeap == NULL)
-                    __leave;
-            }
+            InterlockedIncrement((PLONG)&g_DialogRefresh);
 
             TreeList_ClearTree(PsDlgContext.TreeList);
             ListView_DeleteAllItems(PsDlgContext.ListView);
+
+            if (bRefresh) {
+                RtlDestroyHeap(g_PsListHeap);
+                g_PsListHeap = RtlCreateHeap(HEAP_GROWABLE, NULL, 0, 0, NULL, NULL);
+                if (g_PsListHeap == NULL)
+                    __leave;
+            }
 
             ServiceEnumType = SERVICE_WIN32 | SERVICE_INTERACTIVE_PROCESS;
 
@@ -1021,129 +1119,84 @@ DWORD WINAPI CreateProcessListProc(
                 sizeof(ENUM_SERVICE_STATUS_PROCESS),
                 PsxSCMLookupCallback);
 
-            InfoBuffer = supGetSystemInfo(SystemProcessInformation, &ReturnLength);
+            InfoBuffer = supGetSystemInfo(SystemProcessInformation, NULL);
             if (InfoBuffer == NULL)
                 __leave;
 
-            List.ListRef = (PBYTE)InfoBuffer;
-
-            //
-            // Calculate process handle list size.
-            //
-            do {
-
-                List.ListRef += NextEntryDelta;
-
-                if (List.ProcessEntry->ThreadCount) {
-                    NumberOfProcesses += 1;
-                    NumberOfThreads += List.ProcessEntry->ThreadCount;
-                }
-
-                NextEntryDelta = List.ProcessEntry->NextEntryDelta;
-
-            } while (NextEntryDelta);
-
-            if (NumberOfProcesses == 0)
+            if (!PsxCreateCachedHandleList((PBYTE)InfoBuffer, &nProcesses, &nThreads)) {
                 __leave;
-
-            //
-            // Build process handle list.
-            //
-            spl = (OBEX_PROCESS_LOOKUP_ENTRY*)supHeapAlloc(NumberOfProcesses * sizeof(OBEX_PROCESS_LOOKUP_ENTRY));
-            if (spl == NULL)
-                __leave;
-
-            LookupEntry = spl;
-
-            NextEntryDelta = 0;
-            List.ListRef = (PBYTE)InfoBuffer;
-
-            do {
-                List.ListRef += NextEntryDelta;
-                hProcess = NULL;
-
-                if (List.ProcessEntry->ThreadCount) {
-                    supOpenProcess(
-                        List.ProcessEntry->UniqueProcessId,
-                        PROCESS_QUERY_LIMITED_INFORMATION,
-                        &hProcess);
-                }
-
-                LookupEntry->hProcess = hProcess;
-                LookupEntry->EntryPtr = List.ListRef;
-                LookupEntry = (OBEX_PROCESS_LOOKUP_ENTRY*)RtlOffsetToPointer(LookupEntry,
-                    sizeof(OBEX_PROCESS_LOOKUP_ENTRY));
-
-                NextEntryDelta = List.ProcessEntry->NextEntryDelta;
-
-            } while (NextEntryDelta);
-
-            LookupEntry = spl;
-
-            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId());
+            }
 
             //
             // Show processes/threads count
             //
             _strcpy(szBuffer, TEXT("Processes: "));
-            ultostr(NumberOfProcesses, _strend(szBuffer));
+            ultostr(nProcesses, _strend(szBuffer));
             SendMessage(PsDlgContext.StatusBar, SB_SETTEXT, 0, (LPARAM)&szBuffer);
 
             _strcpy(szBuffer, TEXT("Threads: "));
-            ultostr(NumberOfThreads, _strend(szBuffer));
+            ultostr(nThreads, _strend(szBuffer));
             SendMessage(PsDlgContext.StatusBar, SB_SETTEXT, 1, (LPARAM)&szBuffer);
+
+            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId());
 
             OurSid = supQueryProcessSid(NtCurrentProcess());
 
-            //idle     
-            AddProcessEntryTreeList(
-                NULL,
-                LookupEntry,
-                0,
-                NULL,
-                NULL);
-
-            NumberOfProcesses--;
+            NextEntryDelta = 0;
             ViewRootHandle = NULL;
+            List.ListRef = (PBYTE)InfoBuffer;
 
-            while (NumberOfProcesses) {
-
-                LookupEntry = (OBEX_PROCESS_LOOKUP_ENTRY*)RtlOffsetToPointer(
-                    LookupEntry, sizeof(OBEX_PROCESS_LOOKUP_ENTRY));
+            do {
+                List.ListRef += NextEntryDelta;
 
                 ViewRootHandle = FindParentItem(PsDlgContext.TreeList,
-                    LookupEntry->ProcessInformation->InheritedFromUniqueProcessId);
+                    List.ProcessEntry->InheritedFromUniqueProcessId);
 
-                supHandlesQueryObjectAddress(SortedHandleList,
-                    LookupEntry->hProcess,
-                    &ObjectAddress);
+                ObjectAddress = 0;
+                ProcessHandle = PsxGetHandleFromCachedHandleList(List.ProcessEntry->UniqueProcessId);
+
+                if (SortedHandleList && ProcessHandle) {
+                    supHandlesQueryObjectAddress(SortedHandleList,
+                        ProcessHandle,
+                        &ObjectAddress);
+                }
 
                 if (ViewRootHandle == NULL) {
-                    ViewRootHandle = AddProcessEntryTreeList(NULL,
-                        LookupEntry, ObjectAddress,
-                        &ServicesList, OurSid);
+                    ViewRootHandle = AddProcessEntryTreeList(NULL, 
+                        ProcessHandle,
+                        (PVOID)List.ProcessEntry, 
+                        ObjectAddress,
+                        &ServicesList, 
+                        OurSid);
                 }
                 else {
                     AddProcessEntryTreeList(ViewRootHandle,
-                        LookupEntry, ObjectAddress,
-                        &ServicesList, OurSid);
+                        ProcessHandle,
+                        (PVOID)List.ProcessEntry, 
+                        ObjectAddress,
+                        &ServicesList, 
+                        OurSid);
                 }
 
-                if (LookupEntry->hProcess)
-                    NtClose(LookupEntry->hProcess);
+                if (ProcessHandle) {
+                    NtClose(ProcessHandle);
+                }
+                          
+                NextEntryDelta = List.ProcessEntry->NextEntryDelta;
 
-                NumberOfProcesses--;
-            }
+            } while (NextEntryDelta);
+
         }
     }
     __finally {
         if (OurSid) supHeapFree(OurSid);
         supFreeSCMSnapshot(&ServicesList);
-        if (spl) supHeapFree(spl);
         if (InfoBuffer) supHeapFree(InfoBuffer);
 
         supHandlesFreeList(SortedHandleList);
+        PsxFreeCachedHandleList();
 
+        InterlockedDecrement((PLONG)&g_DialogRefresh);
         ReleaseMutex(g_PsListWait);
     }
     return 0;
@@ -1213,7 +1266,7 @@ INT_PTR PsListHandleNotify(
 
     UNREFERENCED_PARAMETER(hwndDlg);
 
-    if ((nhdr == NULL) || (g_DialogQuit))
+    if ((g_DialogRefresh) || (nhdr == NULL) || (g_DialogQuit))
         return 0;
 
     TreeControl = (HWND)TreeList_GetTreeControlWindow(PsDlgContext.TreeList);
@@ -1460,7 +1513,7 @@ INT_PTR CALLBACK PsListDialogProc(
         DestroyWindow(hwndDlg);
         g_WinObj.AuxDialogs[wobjPsListDlgId] = NULL;
         if (g_PsListHeap) {
-            HeapDestroy(g_PsListHeap);
+            RtlDestroyHeap(g_PsListHeap);
             g_PsListHeap = NULL;
         }
         return TRUE;
@@ -1608,8 +1661,9 @@ VOID extrasCreatePsListDialog(
     PsListDialogResize();
 
     g_DialogQuit = 0;
+    g_DialogRefresh = 0;
     g_PsListWait = CreateMutex(NULL, FALSE, NULL);
-    g_PsListHeap = HeapCreate(0, 0, 0);
+    g_PsListHeap = RtlCreateHeap(HEAP_GROWABLE, NULL, 0, 0, NULL, NULL);
     if (g_PsListHeap) {
         CreateObjectList(FALSE, NULL);
     }

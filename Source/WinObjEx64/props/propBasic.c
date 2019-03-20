@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        18 Mar 2019
+*  DATE:        19 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -69,9 +69,11 @@ VOID propSetObjectHeaderAddressInfo(
 */
 VOID propSetProcessMitigationsInfo(
     _In_ HANDLE hProcess,
+    _In_ BOOL wow64Process,
     _In_ HWND hwndDlg
 )
 {
+    BOOL bQuery;
     LRESULT lResult;
     HWND hwndCB = GetDlgItem(hwndDlg, IDC_PROCESS_MITIGATIONS);
     PROCESS_MITIGATION_POLICIES_ALL Policies;
@@ -85,8 +87,21 @@ VOID propSetProcessMitigationsInfo(
     //
     // DEP state.
     //
-    if (supGetProcessDepState(hProcess,
-        &Policies.DEPPolicy))
+
+    //
+    // Always ON for 64bit.
+    //
+    bQuery = TRUE;
+    Policies.DEPPolicy.Enable = 1;
+    Policies.DEPPolicy.Permanent = 1;
+
+    if (wow64Process) {
+        Policies.DEPPolicy.Flags = 0;
+        bQuery = supGetProcessDepState(hProcess,
+            &Policies.DEPPolicy);
+    }
+
+    if (bQuery)
     {
         if (Policies.DEPPolicy.Flags) {
             _strcpy(szBuffer, TEXT("DEP "));
@@ -101,11 +116,8 @@ VOID propSetProcessMitigationsInfo(
                 }
             }
 
-            _strcat(szBuffer, TEXT(" (ATL thunk emulation is "));
             if (Policies.DEPPolicy.DisableAtlThunkEmulation)
-                _strcat(szBuffer, TEXT("disabled)"));
-            else
-                _strcat(szBuffer, TEXT("enabled)"));
+                _strcat(szBuffer, TEXT(" (ATL thunk emulation is disabled)"));
 
             SendMessage(hwndCB, CB_ADDSTRING, (WPARAM)0, (LPARAM)&szBuffer);
         }
@@ -223,7 +235,7 @@ VOID propSetProcessMitigationsInfo(
     {
         if (Policies.ControlFlowGuardPolicy.Flags) {
             if (Policies.ControlFlowGuardPolicy.EnableControlFlowGuard) {
-                _strcpy(szBuffer, TEXT("CFG"));
+                _strcpy(szBuffer, TEXT("CF Guard"));
 
                 if (Policies.ControlFlowGuardPolicy.EnableExportSuppression) {
                     _strcat(szBuffer, TEXT(" (Export Suppression)"));
@@ -1565,6 +1577,7 @@ VOID propBasicQueryProcess(
     if (bSuccess) {
 
         RtlSecureZeroMemory(&UserProcessParameters, sizeof(UserProcessParameters));
+        RtlSecureZeroMemory(&exbi, sizeof(exbi));
 
         exbi.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
 
@@ -1825,7 +1838,7 @@ VOID propBasicQueryProcess(
         //
         // Mitigations
         //
-        propSetProcessMitigationsInfo(hObject, hwndDlg);
+        propSetProcessMitigationsInfo(hObject, exbi.IsWow64Process, hwndDlg);
 
         //
         // Query object basic and type info if needed.
