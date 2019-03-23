@@ -48,6 +48,14 @@ LPWSTR	g_lpKnownDlls64;
 ULONG g_cHeapAlloc = 0;
 #endif
 
+int __cdecl supxHandlesLookupCallback(
+    void const* first,
+    void const* second);
+
+int __cdecl supxHandlesLookupCallback2(
+    void const* first,
+    void const* second);
+
 /*
 * supInitNtdllCRT
 *
@@ -1750,7 +1758,6 @@ BOOL supQueryProcessNameByEPROCESS(
         PSYSTEM_PROCESSES_INFORMATION Processes;
         PBYTE ListRef;
     } List;
-
 
     List.ListRef = (PBYTE)ProcessList;
 
@@ -4637,7 +4644,7 @@ BOOL supGetProcessMitigationPolicy(
         &Length)))
     {
         return FALSE;
-    }   
+    }
 
 
     RtlCopyMemory(Buffer, &MitigationPolicy.Value, Size);
@@ -5112,6 +5119,37 @@ int __cdecl supxHandlesLookupCallback(
 }
 
 /*
+* supxHandlesLookupCallback2
+*
+* Purpose:
+*
+* qsort, bsearch callback.
+*
+*/
+int __cdecl supxHandlesLookupCallback2(
+    void const* first,
+    void const* second
+)
+{
+    int i;
+    PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX elem1 = (PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)first;
+    PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX elem2 = (PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX)second;
+
+    ULONG_PTR FirstObject = (ULONG_PTR)elem1->Object;
+    ULONG_PTR SecondObject = (ULONG_PTR)elem2->Object;
+
+    if (FirstObject == SecondObject)
+        i = 0;
+    else
+        if (FirstObject < SecondObject)
+            i = -1;
+        else
+            i = 1;
+
+    return i;
+}
+
+/*
 * supHandlesCreateFilteredAndSortedList
 *
 * Purpose:
@@ -5122,7 +5160,8 @@ int __cdecl supxHandlesLookupCallback(
 *
 */
 PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
-    _In_ ULONG_PTR FilterUniqueProcessId
+    _In_ ULONG_PTR FilterUniqueProcessId,
+    _In_ BOOLEAN fObject
 )
 {
     PSYSTEM_HANDLE_INFORMATION_EX Result = NULL, HandleDump;
@@ -5200,7 +5239,7 @@ PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
         rtl_qsort((PVOID)&Result->Handles,
             NumOfElements,
             sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX),
-            supxHandlesLookupCallback);
+            (fObject) ? supxHandlesLookupCallback2 : supxHandlesLookupCallback);
     }
 
     supVirtualFree(RawBuffer);
@@ -5255,7 +5294,7 @@ BOOL supHandlesQueryObjectAddress(
         *ObjectAddress = (ULONG_PTR)SearchResult->Object;
         return TRUE;
     }
-    
+
     *ObjectAddress = 0;
     return FALSE;
 }
@@ -5277,14 +5316,134 @@ NTSTATUS supCICustomKernelSignersAllowed(
 
     *bAllowed = FALSE;
 
-    Status = NtQueryLicenseValue(&usLicenseValue, 
-        NULL, 
-        (PVOID)&Result, 
-        sizeof(DWORD), 
+    Status = NtQueryLicenseValue(&usLicenseValue,
+        NULL,
+        (PVOID)&Result,
+        sizeof(DWORD),
         &DataSize);
 
     if (NT_SUCCESS(Status)) {
         *bAllowed = (Result != 0);
     }
     return Status;
+}
+
+/*
+* supPHLGetEntry
+*
+* Purpose:
+*
+* Return handle from handle list by process id.
+*
+*/
+HANDLE supPHLGetEntry(
+    _In_ PLIST_ENTRY ListHead,
+    _In_ HANDLE UniqueProcessId
+)
+{
+    PLIST_ENTRY Next, Head = ListHead;
+    PHL_ENTRY *Item;
+
+    if (!IsListEmpty(Head)) {
+        Next = Head->Flink;
+        while ((Next != NULL) && (Next != Head)) {
+            Item = CONTAINING_RECORD(Next, PHL_ENTRY, ListEntry);
+            if (Item->UniqueProcessId == UniqueProcessId)
+                return Item->ProcessHandle;
+            Next = Next->Flink;
+        }
+    }
+    return NULL;
+}
+
+/*
+* supPHLFree
+*
+* Purpose:
+*
+* Free list of handles.
+*
+*/
+VOID supPHLFree(
+    _In_ PLIST_ENTRY ListHead,
+    _In_ BOOLEAN fClose
+)
+{
+    PLIST_ENTRY Next, Head = ListHead;
+    PHL_ENTRY *Item;
+
+    if (!IsListEmpty(Head)) {
+        Next = Head->Flink;
+        while ((Next != NULL) && (Next != Head)) {
+            Item = CONTAINING_RECORD(Next, PHL_ENTRY, ListEntry);
+            Next = Next->Flink;
+            if (fClose) {
+                if (Item->ProcessHandle)
+                    NtClose(Item->ProcessHandle);
+            }
+            supHeapFree(Item);
+        }
+    }
+}
+
+/*
+* supPHLCreate
+*
+* Purpose:
+*
+* Create simple handle list of running processes.
+*
+*/
+BOOL supPHLCreate(
+    _Inout_ PLIST_ENTRY ListHead,
+    _In_ PBYTE ProcessList,
+    _Out_ PULONG NumberOfProcesses,
+    _Out_ PULONG NumberOfThreads
+)
+{
+    ULONG NextEntryDelta = 0;
+    ULONG numberOfThreads = 0, numberOfProcesses = 0;
+    PHL_ENTRY *PsListItem;
+    union {
+        PSYSTEM_PROCESSES_INFORMATION ProcessEntry;
+        PBYTE ListRef;
+    } List;
+
+    List.ListRef = ProcessList;
+
+    InitializeListHead(ListHead);
+
+    do {
+
+        List.ListRef += NextEntryDelta;
+
+        numberOfThreads += List.ProcessEntry->ThreadCount;
+        numberOfProcesses += 1;
+        NextEntryDelta = List.ProcessEntry->NextEntryDelta;
+
+        PsListItem = (PHL_ENTRY*)supHeapAlloc(sizeof(PHL_ENTRY));
+        if (PsListItem) {
+
+            PsListItem->UniqueProcessId = List.ProcessEntry->UniqueProcessId;
+            PsListItem->DataPtr = (PVOID)List.ProcessEntry;
+
+            if (List.ProcessEntry->ThreadCount) {
+
+                supOpenProcess(
+                    List.ProcessEntry->UniqueProcessId,
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                    &PsListItem->ProcessHandle);
+
+            }
+
+            InsertHeadList(ListHead, &PsListItem->ListEntry);
+
+        }
+
+    } while (NextEntryDelta);
+
+    *NumberOfThreads = numberOfThreads;
+    *NumberOfProcesses = numberOfProcesses;
+
+    return ((numberOfProcesses > 0) && (numberOfThreads > 0));
 }

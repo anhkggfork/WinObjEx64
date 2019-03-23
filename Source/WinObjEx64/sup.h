@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        19 Mar 2019
+*  DATE:        20 Mar 2019
 *
 *  Common header file for the program support routines.
 *
@@ -43,6 +43,13 @@ typedef struct _ENUMICONINFO {
     HICON hIcon;
     INT cx, cy;
 } ENUMICONINFO, *PENUMICONINFO;
+
+typedef	struct _PHL_ENTRY {
+    LIST_ENTRY ListEntry;
+    HANDLE ProcessHandle;
+    HANDLE UniqueProcessId;
+    PVOID DataPtr;
+} PHL_ENTRY, *PPHL_ENTRY;
 
 typedef struct _OBEX_PROCESS_LOOKUP_ENTRY {
     HANDLE hProcess;
@@ -548,10 +555,25 @@ BOOL supHandlesQueryObjectAddress(
     _Out_ PULONG_PTR ObjectAddress);
 
 PSYSTEM_HANDLE_INFORMATION_EX supHandlesCreateFilteredAndSortedList(
-    _In_ ULONG_PTR FilterUniqueProcessId);
+    _In_ ULONG_PTR FilterUniqueProcessId,
+    _In_ BOOLEAN fObject);
 
 BOOL supHandlesFreeList(
     PSYSTEM_HANDLE_INFORMATION_EX SortedHandleList);
 
 NTSTATUS supCICustomKernelSignersAllowed(
     _Out_ PBOOLEAN bAllowed);
+
+VOID supPHLFree(
+    _In_ PLIST_ENTRY ListHead,
+    _In_ BOOLEAN fClose);
+
+HANDLE supPHLGetEntry(
+    _In_ PLIST_ENTRY ListHead,
+    _In_ HANDLE UniqueProcessId);
+
+BOOL supPHLCreate(
+    _Inout_ PLIST_ENTRY ListHead,
+    _In_ PBYTE ProcessList,
+    _Out_ PULONG NumberOfProcesses,
+    _Out_ PULONG NumberOfThreads);

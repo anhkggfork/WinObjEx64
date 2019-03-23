@@ -4,9 +4,9 @@
 *
 *  TITLE:       KLDBG.H
 *
-*  VERSION:     1.72
+*  VERSION:     1.73
 *
-*  DATE:        04 Feb 2019
+*  DATE:        20 Mar 2019
 *
 *  Common header file for the Kernel Debugger Driver support.
 *
@@ -282,6 +282,9 @@ POBJREF ObCollectionFindByAddress(
 
 PVOID ObGetCallbackBlockRoutine(
     _In_ PVOID CallbackBlock);
+
+BOOLEAN kdReConnectDriver(
+    VOID);
 
 PVOID kdQueryIopInvalidDeviceRequest(
     VOID);

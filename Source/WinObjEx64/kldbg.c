@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        18 Mar 2019
+*  DATE:        20 Mar 2019
 *
 *  MINIMUM SUPPORTED OS WINDOWS 7
 *
@@ -2438,6 +2438,60 @@ POBJREF ObCollectionFindByAddress(
     RtlLeaveCriticalSection(&g_kdctx.ListLock);
 
     return (bFound) ? ObjectEntry : NULL;
+}
+
+/*
+* kdReConnectDriver
+*
+* Purpose:
+*
+* Acquire handle of helper driver device if possible.
+*
+*/
+BOOLEAN kdReConnectDriver(
+    VOID)
+{
+    NTSTATUS status;
+    HANDLE deviceHandle = NULL;
+    UNICODE_STRING usDevice;
+    OBJECT_ATTRIBUTES obja;
+    IO_STATUS_BLOCK iost;
+
+    WCHAR szDeviceName[100];
+
+    if (g_kdctx.hDevice != NULL)
+        return TRUE;
+
+    if (g_kdctx.IsFullAdmin == FALSE)
+        return FALSE;
+
+    if (supEnablePrivilege(SE_DEBUG_PRIVILEGE, TRUE)) {
+
+        _strcpy(szDeviceName, TEXT("\\Device\\"));
+        _strcat(szDeviceName, KLDBGDRV);
+        RtlInitUnicodeString(&usDevice, szDeviceName);
+        InitializeObjectAttributes(&obja, &usDevice, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+        status = NtCreateFile(
+            &deviceHandle,
+            GENERIC_READ | GENERIC_WRITE,
+            &obja,
+            &iost,
+            NULL,
+            0,
+            0,
+            FILE_OPEN,
+            0,
+            NULL,
+            0);
+
+        if (NT_SUCCESS(status)) {
+            g_kdctx.hDevice = deviceHandle;
+            return TRUE;
+        }
+    }
+
+    return FALSE;
 }
 
 /*

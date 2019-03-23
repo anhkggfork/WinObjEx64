@@ -6,7 +6,7 @@
 *
 *  VERSION:     1.73
 *
-*  DATE:        19 Mar 2019
+*  DATE:        20 Mar 2019
 *
 * THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF
 * ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED
@@ -34,12 +34,6 @@ static int      y_splitter_pos = 300, y_capture_pos = 0, y_splitter_max = 0;
 HANDLE g_PsListWait = NULL;
 ULONG g_DialogQuit = 0, g_DialogRefresh = 0;
 HANDLE g_PsListHeap = NULL;
-
-typedef	struct _CACHED_HANDLE_ENTRY {
-    LIST_ENTRY ListEntry;
-    HANDLE ProcessHandle;
-    HANDLE UniqueProcessId;
-} CACHED_HANDLE_ENTRY, *PCACHED_HANDLE_ENTRY;
 
 LIST_ENTRY g_PsListHead;
 
@@ -335,7 +329,7 @@ VOID PsListHandleObjectProp(
     //
     // Create fake name for display.
     //
-    sz = 1024 + ImageName->Length;
+    sz = 1024 + (SIZE_T)ImageName->Length;
     lpName = (LPWSTR)supHeapAlloc(sz);
     if (lpName == NULL)
         return;
@@ -759,6 +753,8 @@ DWORD WINAPI CreateThreadListProc(
         dwWaitResult = WaitForSingleObject(g_PsListWait, INFINITE);
         if (dwWaitResult == WAIT_OBJECT_0) {
 
+            supSetWaitCursor(TRUE);
+
             ListView_DeleteAllItems(PsDlgContext.ListView);
 
             UniqueProcessId = ObjectEntry->ClientId.UniqueProcess;
@@ -808,7 +804,7 @@ DWORD WINAPI CreateThreadListProc(
             supHeapFree(ProcessList);
             ProcessList = NULL;
 
-            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId());
+            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId(), FALSE);
             stlptr = stl;
 
             for (i = 0; i < ThreadCount; i++, stlptr++) {
@@ -961,96 +957,13 @@ DWORD WINAPI CreateThreadListProc(
         supHandlesFreeList(SortedHandleList);
 
         if (ProcessList) supHeapFree(ProcessList);
+
+        supSetWaitCursor(FALSE);
+
         ReleaseMutex(g_PsListWait);
     }
 
     return 0;
-}
-
-HANDLE PsxGetHandleFromCachedHandleList(
-    _In_ HANDLE UniqueProcessId
-)
-{
-    PLIST_ENTRY Next, Head = &g_PsListHead;
-    CACHED_HANDLE_ENTRY *Item;
-
-    if (!IsListEmpty(&g_PsListHead)) {
-        Next = Head->Flink;
-        while ((Next != NULL) && (Next != Head)) {
-            Item = CONTAINING_RECORD(Next, CACHED_HANDLE_ENTRY, ListEntry);
-            if (Item->UniqueProcessId == UniqueProcessId)
-                return Item->ProcessHandle;
-            Next = Next->Flink;
-        }
-    }
-    return NULL;
-}
-
-VOID PsxFreeCachedHandleList()
-{
-    PLIST_ENTRY Next, Head = &g_PsListHead;
-    CACHED_HANDLE_ENTRY *Item;
-
-    if (!IsListEmpty(&g_PsListHead)) {
-        Next = Head->Flink;
-        while ((Next != NULL) && (Next != Head)) {
-            Item = CONTAINING_RECORD(Next, CACHED_HANDLE_ENTRY, ListEntry);
-            Next = Next->Flink;
-            if (Item) supHeapFree(Item);
-        }
-    }
-}
-
-BOOL PsxCreateCachedHandleList(
-    _In_ PBYTE ProcessList,
-    _Out_ PULONG NumberOfProcesses,
-    _Out_ PULONG NumberOfThreads
-)
-{
-    ULONG NextEntryDelta = 0;
-    ULONG numberOfThreads = 0, numberOfProcesses = 0;
-    CACHED_HANDLE_ENTRY *PsListItem;
-    union {
-        PSYSTEM_PROCESSES_INFORMATION ProcessEntry;
-        PBYTE ListRef;
-    } List;
-
-    List.ListRef = ProcessList;
-
-    InitializeListHead(&g_PsListHead);
-
-    do {
-
-        List.ListRef += NextEntryDelta;
-
-        numberOfThreads += List.ProcessEntry->ThreadCount;
-        numberOfProcesses += 1;
-        NextEntryDelta = List.ProcessEntry->NextEntryDelta;
-
-        PsListItem = (CACHED_HANDLE_ENTRY*)supHeapAlloc(sizeof(CACHED_HANDLE_ENTRY));
-        if (PsListItem) {
-
-            PsListItem->UniqueProcessId = List.ProcessEntry->UniqueProcessId;
-
-            if (List.ProcessEntry->ThreadCount) {
-
-                supOpenProcess(
-                    List.ProcessEntry->UniqueProcessId,
-                    PROCESS_QUERY_LIMITED_INFORMATION,
-                    &PsListItem->ProcessHandle);
-
-            }
-
-            InsertHeadList(&g_PsListHead, &PsListItem->ListEntry);
-
-        }
-
-    } while (NextEntryDelta);
-
-    *NumberOfThreads = numberOfThreads;
-    *NumberOfProcesses = numberOfProcesses;
-
-    return ((numberOfProcesses > 0) && (numberOfThreads > 0));
 }
 
 /*
@@ -1096,6 +1009,8 @@ DWORD WINAPI CreateProcessListProc(
 
             InterlockedIncrement((PLONG)&g_DialogRefresh);
 
+            supSetWaitCursor(TRUE);
+
             TreeList_ClearTree(PsDlgContext.TreeList);
             ListView_DeleteAllItems(PsDlgContext.ListView);
 
@@ -1123,7 +1038,7 @@ DWORD WINAPI CreateProcessListProc(
             if (InfoBuffer == NULL)
                 __leave;
 
-            if (!PsxCreateCachedHandleList((PBYTE)InfoBuffer, &nProcesses, &nThreads)) {
+            if (!supPHLCreate(&g_PsListHead, (PBYTE)InfoBuffer, &nProcesses, &nThreads)) {
                 __leave;
             }
 
@@ -1138,7 +1053,7 @@ DWORD WINAPI CreateProcessListProc(
             ultostr(nThreads, _strend(szBuffer));
             SendMessage(PsDlgContext.StatusBar, SB_SETTEXT, 1, (LPARAM)&szBuffer);
 
-            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId());
+            SortedHandleList = supHandlesCreateFilteredAndSortedList(GetCurrentProcessId(), FALSE);
 
             OurSid = supQueryProcessSid(NtCurrentProcess());
 
@@ -1153,7 +1068,7 @@ DWORD WINAPI CreateProcessListProc(
                     List.ProcessEntry->InheritedFromUniqueProcessId);
 
                 ObjectAddress = 0;
-                ProcessHandle = PsxGetHandleFromCachedHandleList(List.ProcessEntry->UniqueProcessId);
+                ProcessHandle = supPHLGetEntry(&g_PsListHead, List.ProcessEntry->UniqueProcessId);
 
                 if (SortedHandleList && ProcessHandle) {
                     supHandlesQueryObjectAddress(SortedHandleList,
@@ -1162,26 +1077,26 @@ DWORD WINAPI CreateProcessListProc(
                 }
 
                 if (ViewRootHandle == NULL) {
-                    ViewRootHandle = AddProcessEntryTreeList(NULL, 
+                    ViewRootHandle = AddProcessEntryTreeList(NULL,
                         ProcessHandle,
-                        (PVOID)List.ProcessEntry, 
+                        (PVOID)List.ProcessEntry,
                         ObjectAddress,
-                        &ServicesList, 
+                        &ServicesList,
                         OurSid);
                 }
                 else {
                     AddProcessEntryTreeList(ViewRootHandle,
                         ProcessHandle,
-                        (PVOID)List.ProcessEntry, 
+                        (PVOID)List.ProcessEntry,
                         ObjectAddress,
-                        &ServicesList, 
+                        &ServicesList,
                         OurSid);
                 }
 
                 if (ProcessHandle) {
                     NtClose(ProcessHandle);
                 }
-                          
+
                 NextEntryDelta = List.ProcessEntry->NextEntryDelta;
 
             } while (NextEntryDelta);
@@ -1194,9 +1109,12 @@ DWORD WINAPI CreateProcessListProc(
         if (InfoBuffer) supHeapFree(InfoBuffer);
 
         supHandlesFreeList(SortedHandleList);
-        PsxFreeCachedHandleList();
+        supPHLFree(&g_PsListHead, FALSE);
 
         InterlockedDecrement((PLONG)&g_DialogRefresh);
+
+        supSetWaitCursor(FALSE);
+
         ReleaseMutex(g_PsListWait);
     }
     return 0;
@@ -1391,7 +1309,7 @@ INT_PTR CALLBACK PsListDialogProc(
     INT dy;
     RECT crc;
     INT mark;
-    HWND TreeListControl;
+    HWND TreeListControl, FocusWindow;
 
     switch (uMsg) {
 
@@ -1444,12 +1362,19 @@ INT_PTR CALLBACK PsListDialogProc(
             }
             break;
         case ID_VIEW_REFRESH:
-            CreateObjectList(FALSE, IntToPtr(TRUE));
+        case ID_VIEW_REFRESH + 1:
+
+            FocusWindow = GetFocus();
+            TreeListControl = TreeList_GetTreeControlWindow(PsDlgContext.TreeList);
+
+            if (FocusWindow == TreeListControl) {
+                CreateObjectList(FALSE, IntToPtr(TRUE));
+            }
+            else if (FocusWindow == PsDlgContext.ListView) {
+                PsListHandleThreadRefresh();
+            }
             break;
 
-        case ID_VIEW_REFRESH + 1:
-            PsListHandleThreadRefresh();
-            break;
         default:
             break;
         }
